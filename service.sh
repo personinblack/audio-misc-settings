@@ -22,16 +22,6 @@ function which_resetprop_command()
 function additionalSettings()
 {
     local force_restart_server=0
-    
-    if [ "`getprop persist.sys.phh.disable_audio_effects`" = "0" ]; then
-        resetprop_command="`which_resetprop_command`"
-        if [ -n "$resetprop_command" ]; then
-            "$resetprop_command" ro.audio.ignore_effects true
-            force_restart_server=1
-        else
-            return 1
-        fi
-    fi
 
     # Nullifying the volume listener for no compressing audio (maybe a peak limiter)
     if [ "`getprop persist.sys.phh.disable_soundvolume_effect`" = "0" ]; then
