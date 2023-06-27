@@ -23,6 +23,12 @@ function additionalSettings()
 {
     local force_restart_server=0
 
+    # Stop Tensor device's AOC daemon for reducing significant jitter
+    if [ "`getprop init.svc.aocd`" = "running" ]; then
+        setprop ctl.stop aocd
+        force_restart_server=1
+    fi
+
     # Nullifying the volume listener for no compressing audio (maybe a peak limiter)
     if [ "`getprop persist.sys.phh.disable_soundvolume_effect`" = "0" ]; then
         if [ -r "/system/phh/empty"  -a  -r "/vendor/lib/soundfx/libvolumelistener.so" ]; then
@@ -33,7 +39,7 @@ function additionalSettings()
             mount -o bind "/system/phh/empty" "/vendor/lib64/soundfx/libvolumelistener.so"
             force_restart_server=1
         fi
-        
+
     elif [ "`getprop persist.sys.phh.disable_soundvolume_effect`" != "1" ]; then
         # for non- phh GSI's (Qcomm devices only?)
         if [ -r "/vendor/lib/soundfx/libvolumelistener.so" ]; then
@@ -44,9 +50,9 @@ function additionalSettings()
             mount -o bind "/dev/null" "/vendor/lib64/soundfx/libvolumelistener.so"
             force_restart_server=1
         fi
-        
+
     fi
-        
+
     if [ "$force_restart_server" = "1"  -o  "`getprop ro.system.build.version.release`" -ge "12" ]; then
         if [ -n "`getprop init.svc.audioserver`" ]; then
             setprop ctl.restart audioserver
@@ -59,7 +65,7 @@ function additionalSettings()
                 fi
             fi
         fi
-        
+
     fi
     settings put system volume_steps_music 100
 }

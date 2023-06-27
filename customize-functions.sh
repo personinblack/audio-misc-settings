@@ -36,6 +36,9 @@ function getActualConfigXML()
         elif [ -e "${dir}_qssi"  -a  -r "${dir}_qssi/${fname}" ]; then
             # OnePlus stock pattern
             echo "${dir}_qssi/${fname}"
+        elif [ "${dir##*/}"  = "sku_`getprop ro.board.platform`"  -a  -r "${dir%/*}/${fname}" ]; then
+            # OnePlus stock pattern2
+            echo "${dir%/*}/${fname}"
         elif [ -r "${dir}/audio/${fname}" ]; then
             # Xiaomi stock pattern
             echo "${dir}/audio/${fname}"
@@ -107,11 +110,13 @@ function makeLibraries()
     local d lname
     
     for d in "lib" "lib64"; do
-        for lname in "libalsautils.so" "libalsautilsv2.so"; do
+        for lname in "libalsautils.so" "libalsautilsv2.so" "audio_usb_aoc.so"; do
             if [ -r "${MAGISKPATH}/.magisk/mirror/vendor/${d}/${lname}" ]; then
                 mkdir -p "${MODPATH}/system/vendor/${d}"
                 patchMapProperty "${MAGISKPATH}/.magisk/mirror/vendor/${d}/${lname}" "${MODPATH}/system/vendor/${d}/${lname}"
                 chmod 644 "${MODPATH}/system/vendor/${d}/${lname}"
+                chcon u:object_r:vendor_file:s0 "${MODPATH}/system/vendor/${d}/${lname}"
+                chown root:root "${MODPATH}/system/vendor/${d}/${lname}"
                 chmod -R a+rX "${MODPATH}/system/vendor/${d}"
                 if [ -z "${REPLACE}" ]; then
                     REPLACE="/system/vendor/${d}/${lname}"
@@ -232,12 +237,12 @@ function replaceSystemProps_kona()
 
     else
         sed -i \
-            -e 's/vendor\.audio\.usb\.perio=.*$/vendor\.audio\.usb\.perio=2500/' \
-            -e 's/vendor\.audio\.usb\.out\.period_us=.*$/vendor\.audio\.usb\.out\.period_us=2500/' \
+            -e 's/vendor\.audio\.usb\.perio=.*$/vendor\.audio\.usb\.perio=3500/' \
+            -e 's/vendor\.audio\.usb\.out\.period_us=.*$/vendor\.audio\.usb\.out\.period_us=3500/' \
                 "$MODPATH/system.prop"
         sed -i \
-            -e 's/vendor\.audio\.usb\.perio=.*$/vendor\.audio\.usb\.perio=2500/' \
-            -e 's/vendor\.audio\.usb\.out\.period_us=.*$/vendor\.audio\.usb\.out\.period_us=2500/' \
+            -e 's/vendor\.audio\.usb\.perio=.*$/vendor\.audio\.usb\.perio=3500/' \
+            -e 's/vendor\.audio\.usb\.out\.period_us=.*$/vendor\.audio\.usb\.out\.period_us=3500/' \
                 "$MODPATH/system.prop-workaround"
 
     fi
@@ -251,35 +256,32 @@ function replaceSystemProps_SDM845()
 
 function replaceSystemProps_SDM()
 {
-    if [ -e "${MODPATH%/*/*}/modules/usb-samplerate-unlocker"  -o  -e "${MODPATH%/*/*}/modules_update/usb-samplerate-unlocker" ]; then
-        sed -i \
-            -e 's/vendor\.audio\.usb\.perio=.*$/vendor\.audio\.usb\.perio=2625/' \
-            -e 's/vendor\.audio\.usb\.out\.period_us=.*$/vendor\.audio\.usb\.out\.period_us=2625/' \
-                "$MODPATH/system.prop"
-        sed -i \
-            -e 's/vendor\.audio\.usb\.perio=.*$/vendor\.audio\.usb\.perio=2625/' \
-            -e 's/vendor\.audio\.usb\.out\.period_us=.*$/vendor\.audio\.usb\.out\.period_us=2625/' \
-                "$MODPATH/system.prop-workaround"
-
-        loosenedMessage 192kHz
-
-    else
-        sed -i \
-            -e 's/vendor\.audio\.usb\.perio=.*$/vendor\.audio\.usb\.perio=2500/' \
-            -e 's/vendor\.audio\.usb\.out\.period_us=.*$/vendor\.audio\.usb\.out\.period_us=2500/' \
-                "$MODPATH/system.prop"
-        sed -i \
-            -e 's/vendor\.audio\.usb\.perio=.*$/vendor\.audio\.usb\.perio=2500/' \
-            -e 's/vendor\.audio\.usb\.out\.period_us=.*$/vendor\.audio\.usb\.out\.period_us=2500/' \
-                "$MODPATH/system.prop-workaround"
-
-    fi
+    # Do nothing even if "usb-samplerate-unlocker" exists
+    :
 }
 
 function replaceSystemProps_MTK_Dimensity()
 {
     # Do nothing even if "usb-samplerate-unlocker" exists
     :
+}
+
+function replaceSystemProps_Tensor()
+{
+    local freq="96000"
+    if [ $# -gt 0 ]; then
+        freq="$1"
+    fi
+    
+   sed -i \
+        -e 's/vendor\.audio\.usb\.perio=.*$/vendor\.audio\.usb\.perio=2500/' \
+        -e 's/vendor\.audio\.usb\.out\.period_us=.*$/vendor\.audio\.usb\.out\.period_us=2500/' \
+            "$MODPATH/system.prop"
+    sed -i \
+        -e 's/vendor\.audio\.usb\.perio=.*$/vendor\.audio\.usb\.perio=2500/' \
+        -e 's/vendor\.audio\.usb\.out\.period_us=.*$/vendor\.audio\.usb\.out\.period_us=2500/' \
+            "$MODPATH/system.prop-workaround"
+
 }
 
 function replaceSystemProps_Others()
@@ -298,4 +300,78 @@ function replaceSystemProps_Others()
         
     fi
     
+}
+
+function stopSpatializer()
+{
+    # stopSpatializer has two args specifying an audio policy configuration XML file (eg. bluetooth_audio_policy_configuration_7_0.xml) 
+    #   and its dummy one to be overridden
+
+    if [ $# -eq 2  -a  -r "$1"  -a  -w "$2" ]; then
+        # Copy and override an original audio_policy_configuration.xml to its dummy file
+        cp -f "$1" "$2"
+        # Change an audio_policy_configuration.xml file to remove Spatializer
+        sed -i 's/flags[:space:]*=[:space:]*"AUDIO_OUTPUT_FLAG_SPATIALIZER"//' "$2"
+    fi
+}
+
+function deSpatializeAudioPolicyConfig()
+{
+    if [ $# -ne 1  -o  -z "$1"  -o  ! -r "$1" ]; then
+        return 1
+    fi
+    local MAGISKPATH="$(magisk --path)"
+    local configXML="$1"
+    
+    # Don't use "$MAGISKPATH/.magisk/mirror/system${configXML}" instead of "$MAGISKPATH/.magisk/mirror${configXML}".
+    # In some cases, the former may link to overlaied "${configXML}" by Magisk itself (not original mirrored "${configXML}").
+    local mirrorConfigXML="$MAGISKPATH/.magisk/mirror${configXML}"
+
+    if [ -n "$configXML"  -a  -r "$mirrorConfigXML" ]; then
+        grep -e "flags[[:space:]]*=[[:space:]]*\"AUDIO_OUTPUT_FLAG_SPATIALIZER\"" "$mirrorConfigXML" >"/dev/null" 2>&1
+        if [ "$?" -eq 0 ]; then
+            local modConfigXML="$MODPATH/system${configXML}"
+            mkdir -p "${modConfigXML%/*}"
+            touch "$modConfigXML"
+            stopSpatializer "$mirrorConfigXML" "$modConfigXML"
+            chmod 644 "$modConfigXML"
+            chcon u:object_r:vendor_configs_file:s0 "$modConfigXML"
+            chown root:root "$modConfigXML"
+            chmod -R a+rX "${modConfigXML%/*}"
+            if [ -z "$REPLACE" ]; then
+                REPLACE="/system${configXML}"
+            else
+                REPLACE="$REPLACE /system${configXML}"
+            fi
+        fi
+    fi
+}
+
+function disablePrivApps()
+{
+    if [ $# -ne 1  -o  -z "$1" ]; then
+        return 1
+    fi
+
+    local MAGISKPATH="$(magisk --path)"
+    local dir mdir
+    local PrivApps="$1"
+    
+    for dir in $PrivApps; do
+        if [ -d "${MAGISKPATH}/.magisk/mirror${dir}" ]; then
+            case "${dir}" in
+                /system/* )
+                    dir="${dir#/system}"
+                ;;
+            esac
+            mdir="${MODPATH}/system${dir}"
+            mkdir -p "$mdir"
+            chmod a+rx "$mdir"
+            if [ -z "$REPLACE" ]; then
+                REPLACE="/system${dir}"
+            else
+                REPLACE="${REPLACE} /system${dir}"
+            fi
+        fi
+    done
 }
